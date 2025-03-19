@@ -1,0 +1,54 @@
+pipeline {
+    agent any
+    
+    environment {
+        AWS_REGION = 'us-east-1'
+        ECR_FRONTEND_REPO = credentials('ECR_FRONTEND_REPO')
+        ECR_BACKEND_REPO = credentials('ECR_BACKEND_REPO')
+        FRONTEND_URL = credentials('FRONTEND_URL')
+        BACKEND_URL = credentials('BACKEND_URL')
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                // Checkout the source code
+                checkout scm
+            }
+        }
+        
+        stage('Build Frontend') {
+            steps {
+                dir('app/frontend') {
+                    sh 'aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_FRONTEND_REPO}'
+                    sh "docker build -t ${ECR_FRONTEND_REPO}:latest --build-arg REACT_APP_API_URL=${BACKEND_URL} ."
+                    sh "docker push ${ECR_FRONTEND_REPO}:latest"
+                }
+            }
+        }
+        
+        stage('Build Backend') {
+            steps {
+                dir('app/backend') {
+                    sh 'aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_BACKEND_REPO}'
+                    sh "docker build -t ${ECR_BACKEND_REPO}:latest --build-arg FRONTEND_URL=${FRONTEND_URL} ."
+                    sh "docker push ${ECR_BACKEND_REPO}:latest"
+                }
+            }
+        }
+        
+        stage('Deploy to ECS') {
+            steps {
+                sh 'aws ecs update-service --cluster lightfeather-cluster --service lightfeather-frontend --force-new-deployment --region ${AWS_REGION}'
+                sh 'aws ecs update-service --cluster lightfeather-cluster --service lightfeather-backend --force-new-deployment --region ${AWS_REGION}'
+            }
+        }
+    }
+    
+    post {
+        always {
+            // Clean up Docker images to save space
+            sh 'docker system prune -f'
+        }
+    }
+}
